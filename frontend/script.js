@@ -3,10 +3,10 @@ const BASE_URL = 'https://hydro-analytics-pro.onrender.com';
 
 let allStations = [];
 
+// Initial Load (Waking up the server)
 window.onload = async () => {
     const loader = document.getElementById('loader-overlay');
     loader.classList.remove('hidden');
-    console.log("Connecting to backend...");
 
     try {
         const res = await fetch(`${BASE_URL}/api/all-stations`);
@@ -15,17 +15,15 @@ window.onload = async () => {
         allStations = await res.json();
         renderGrid(allStations.slice(0, 60));
     } catch (err) {
-        console.warn("Server is sleeping. Retrying in 3 seconds...");
-        // Update loader text if you have a span for it
-        const loadText = document.querySelector('#loader-overlay p');
-        if (loadText) loadText.innerText = "Waking up cloud server... Please wait.";
-        
+        console.warn("Server is sleeping. Silent retry in 3 seconds...");
         setTimeout(window.onload, 3000); 
     } finally {
-        loader.classList.add('hidden');
+        // We only hide the loader if we actually have data
+        if (allStations.length > 0) loader.classList.add('hidden');
     }
 };
 
+// Analysis Function (No Alert Boxes)
 async function analyzeStation(name) {
     const loader = document.getElementById('loader-overlay');
     const output = document.getElementById('prediction-output');
@@ -36,11 +34,7 @@ async function analyzeStation(name) {
     try {
         const res = await fetch(`${BASE_URL}/api/search?place=${encodeURIComponent(name.toLowerCase())}`);
         
-        if (!res.ok) {
-            console.log("Analysis request pending... retrying.");
-            setTimeout(() => analyzeStation(name), 2000);
-            return;
-        }
+        if (!res.ok) throw new Error("Latency");
 
         const data = await res.json();
         
@@ -56,13 +50,13 @@ async function analyzeStation(name) {
         document.getElementById('res-suggest').innerText = data.recommendation;
 
         output.classList.remove('hidden');
+        loader.classList.add('hidden');
         window.scrollTo({ top: 0, behavior: 'smooth' });
 
     } catch (err) {
-        console.error("Analysis failed:", err);
+        console.warn("Silent retry for:", name);
+        // If it fails, we wait 2 seconds and try again without bothering the user
         setTimeout(() => analyzeStation(name), 2000);
-    } finally {
-        loader.classList.add('hidden');
     }
 }
 
