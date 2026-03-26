@@ -1,6 +1,6 @@
 // CHANGE THIS TO YOUR LIVE RENDER/RAILWAY URL ONCE DEPLOYED
 // Example: const BASE_URL = 'https://hydro-analytics-api.onrender.com';
-const BASE_URL = 'http://localhost:3000'; 
+const BASE_URL = 'https://hydro-analytics-pro.onrender.com'; 
 
 let allStations = [];
 
