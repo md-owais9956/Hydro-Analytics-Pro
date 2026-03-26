@@ -7,22 +7,23 @@ const axios = require('axios');
 
 const app = express();
 
-// 1. DYNAMIC CORS: This allows your Vercel URL to access the data
-// You can use app.use(cors()) for a quick fix, but this is more secure:
+// --- THE CRITICAL CORS FIX ---
+// This middleware must be the VERY FIRST thing after initializing 'app'
 app.use(cors()); 
-app.use(cors({
-    origin: '*', 
-    methods: ['GET', 'POST'],
-    allowedHeaders: ['Content-Type']
-}));
-// --- CONFIGURATION ---
-// Use Environment Variables for the API Key in Render Settings
-const API_KEY = process.env.WEATHER_API_KEY || 'YOUR_OPENWEATHERMAP_API_KEY'; 
 
-// Use path.join to ensure the file is found regardless of where the server starts
+// Manual header override (Triple-safe for exhibitions)
+app.use((req, res, next) => {
+    res.header("Access-Control-Allow-Origin", "*");
+    res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+    res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept");
+    next();
+});
+
+// --- CONFIGURATION ---
+const API_KEY = process.env.weather_api_key || 'YOUR_OPENWEATHERMAP_API_KEY'; 
 const csvPath = path.join(__dirname, 'data', 'groundwater_history.csv');
 
-// --- ML LOGIC: Linear Regression for 1-Year Forecast ---
+// ML Logic: Linear Regression
 function predictFuture(data) {
     if (data.length < 2) return "Stable";
     const n = data.length;
@@ -36,87 +37,56 @@ function predictFuture(data) {
     return nextVal.toFixed(2);
 }
 
-// 2. API: GET ALL STATIONS
+// Routes
 app.get('/api/all-stations', (req, res) => {
     const stations = [];
     const seen = new Set();
+    if (!fs.existsSync(csvPath)) return res.status(500).json({ error: "CSV missing" });
 
-    if (!fs.existsSync(csvPath)) {
-        console.error("CSV NOT FOUND AT:", csvPath);
-        return res.status(500).json({ error: "Database file missing on server" });
-    }
-
-    fs.createReadStream(csvPath)
-        .pipe(csv())
-        .on('data', (row) => {
-            if (row.station_name && !seen.has(row.station_name)) {
-                stations.push({ 
-                    name: row.station_name, 
-                    district: row.district_name, 
-                    state: row.state_name,
-                    level: row.currentlevel 
-                });
-                seen.add(row.station_name);
-            }
-        })
-        .on('end', () => {
-            res.json(stations);
-        });
+    fs.createReadStream(csvPath).pipe(csv()).on('data', (row) => {
+        if (row.station_name && !seen.has(row.station_name)) {
+            stations.push({ name: row.station_name, district: row.district_name, state: row.state_name });
+            seen.add(row.station_name);
+        }
+    }).on('end', () => res.json(stations));
 });
 
-// 3. API: DETAILED ANALYSIS (Virtual Sensors + Forecast)
 app.get('/api/search', async (req, res) => {
     const query = req.query.place ? req.query.place.toLowerCase() : "";
     const history = [];
     let matchRow = null;
 
-    fs.createReadStream(csvPath)
-        .pipe(csv())
-        .on('data', (row) => {
-            if (row.station_name.toLowerCase() === query) {
-                history.push(parseFloat(row.currentlevel));
-                matchRow = row;
-            }
-        })
-        .on('end', async () => {
-            if (!matchRow) return res.status(404).json({ error: "Station data not found" });
-
-            let hum, tmp;
-            try {
-                // Virtual Sensor Call
-                const weather = await axios.get(`https://api.openweathermap.org/data/2.5/weather?q=${matchRow.district_name}&appid=${API_KEY}&units=metric`);
-                hum = weather.data.main.humidity;
-                tmp = weather.data.main.temp;
-            } catch (err) {
-                // Fallback to avoid "undefined" if API limits are hit
-                hum = 40; tmp = 30; 
-                console.log("API fallback used for", matchRow.district_name);
-            }
+    fs.createReadStream(csvPath).pipe(csv()).on('data', (row) => {
+        if (row.station_name.toLowerCase() === query) {
+            history.push(parseFloat(row.currentlevel));
+            matchRow = row;
+        }
+    }).on('end', async () => {
+        if (!matchRow) return res.status(404).json({ error: "No data" });
+        let hum = 40, tmp = 30;
+        try {
+            const weather = await axios.get(`https://api.openweathermap.org/data/2.5/weather?q=${matchRow.district_name}&appid=${API_KEY}&units=metric`);
+            hum = weather.data.main.humidity;
+            tmp = weather.data.main.temp;
+        } catch (err) { console.log("API Fallback"); }
             
-            const lastKnown = history[history.length - 1];
-            
-            // Refined Logic: Increased penalty for heat/dryness
-            const liveEst = (lastKnown + (hum * 0.01) - (tmp * 0.08)).toFixed(2);
-            const futureFore = predictFuture(history);
+        const lastKnown = history[history.length - 1];
+        const liveEst = (lastKnown + (hum * 0.01) - (tmp * 0.08)).toFixed(2);
+        const futureFore = predictFuture(history);
+        let wpi = (parseFloat(liveEst) * 1.5) + (hum * 0.4) + ((40 - tmp) * 0.6);
+        wpi = Math.min(Math.max(wpi, 0), 100).toFixed(1);
 
-            // Water Probability Index (WPI)
-            let wpi = (parseFloat(liveEst) * 1.5) + (hum * 0.4) + ((40 - tmp) * 0.6);
-            wpi = Math.min(Math.max(wpi, 0), 100).toFixed(1);
-
-            res.json({
-                station: matchRow.station_name,
-                estimatedLevel: liveEst,
-                forecastLevel: futureFore,
-                humidity: hum,
-                temp: tmp,
-                wpi: wpi,
-                recommendation: wpi > 50 ? "✅ High Potential Zone" : "⚠️ Low Potential Zone"
-            });
+        res.json({
+            station: matchRow.station_name.toUpperCase(),
+            estimatedLevel: liveEst,
+            forecastLevel: futureFore,
+            humidity: hum,
+            temp: tmp,
+            wpi: wpi,
+            recommendation: wpi > 50 ? "✅ High Potential Zone" : "⚠️ Low Potential Zone"
         });
+    });
 });
 
-// 4. DYNAMIC PORT: Critical for Render/Cloud deployment
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-    console.log(`Hydro-Analytics Backend Live on Port ${PORT}`);
-});
+app.listen(PORT, () => console.log(`Backend Running on Port ${PORT}`));
