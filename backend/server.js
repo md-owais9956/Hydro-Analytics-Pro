@@ -10,7 +10,11 @@ const app = express();
 // 1. DYNAMIC CORS: This allows your Vercel URL to access the data
 // You can use app.use(cors()) for a quick fix, but this is more secure:
 app.use(cors()); 
-
+app.use(cors({
+    origin: '*', 
+    methods: ['GET', 'POST'],
+    allowedHeaders: ['Content-Type']
+}));
 // --- CONFIGURATION ---
 // Use Environment Variables for the API Key in Render Settings
 const API_KEY = process.env.WEATHER_API_KEY || 'YOUR_OPENWEATHERMAP_API_KEY'; 
