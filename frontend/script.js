@@ -1,4 +1,4 @@
-// MUST BE YOUR LIVE RENDER URL (No trailing slash)
+// 1. UPDATE THIS TO YOUR ACTUAL RENDER URL
 const BASE_URL = 'https://hydro-analytics-pro.onrender.com'; 
 
 let allStations = [];
@@ -6,14 +6,21 @@ let allStations = [];
 window.onload = async () => {
     const loader = document.getElementById('loader-overlay');
     loader.classList.remove('hidden');
+    console.log("Connecting to backend...");
+
     try {
         const res = await fetch(`${BASE_URL}/api/all-stations`);
         if (!res.ok) throw new Error("Waking up...");
+        
         allStations = await res.json();
         renderGrid(allStations.slice(0, 60));
     } catch (err) {
-        console.log("Server is warming up, retrying in 2 seconds...");
-        setTimeout(window.onload, 2000); // Auto-retry the initial load
+        console.warn("Server is sleeping. Retrying in 3 seconds...");
+        // Update loader text if you have a span for it
+        const loadText = document.querySelector('#loader-overlay p');
+        if (loadText) loadText.innerText = "Waking up cloud server... Please wait.";
+        
+        setTimeout(window.onload, 3000); 
     } finally {
         loader.classList.add('hidden');
     }
@@ -24,16 +31,20 @@ async function analyzeStation(name) {
     const output = document.getElementById('prediction-output');
     
     loader.classList.remove('hidden');
-    output.classList.add('hidden'); // Hide old results while loading
+    if (output) output.classList.add('hidden');
 
     try {
         const res = await fetch(`${BASE_URL}/api/search?place=${encodeURIComponent(name.toLowerCase())}`);
         
-        if (!res.ok) throw new Error("API Delay");
+        if (!res.ok) {
+            console.log("Analysis request pending... retrying.");
+            setTimeout(() => analyzeStation(name), 2000);
+            return;
+        }
 
         const data = await res.json();
         
-        // Populate UI
+        // Update UI
         document.getElementById('res-location').innerText = data.station;
         document.getElementById('res-level').innerHTML = `
             Live Estimate: <strong>${data.estimatedLevel}m</strong><br>
@@ -48,15 +59,23 @@ async function analyzeStation(name) {
         window.scrollTo({ top: 0, behavior: 'smooth' });
 
     } catch (err) {
-        console.warn("Retrying analysis due to server latency...");
-        // Instead of an alert, we wait 1 second and try again automatically
-        setTimeout(() => analyzeStation(name), 1000);
+        console.error("Analysis failed:", err);
+        setTimeout(() => analyzeStation(name), 2000);
     } finally {
         loader.classList.add('hidden');
     }
 }
 
-// Search Filter Logic
+function renderGrid(data) {
+    const list = document.getElementById('station-list');
+    list.innerHTML = data.map(s => `
+        <div class="station-card" onclick="analyzeStation('${s.name}')" style="cursor: pointer;">
+            <h3>${s.name}</h3>
+            <p>${s.district}</p>
+        </div>
+    `).join('');
+}
+
 document.getElementById('search-bar').addEventListener('input', (e) => {
     const term = e.target.value.toLowerCase();
     const filtered = allStations.filter(s => 
@@ -64,13 +83,3 @@ document.getElementById('search-bar').addEventListener('input', (e) => {
     );
     renderGrid(filtered.slice(0, 60));
 });
-
-function renderGrid(data) {
-    const list = document.getElementById('station-list');
-    list.innerHTML = data.map(s => `
-        <div class="station-card" onclick="analyzeStation('${s.name}')">
-            <h3>${s.name}</h3>
-            <p>${s.district}</p>
-        </div>
-    `).join('');
-}

@@ -7,14 +7,11 @@ const axios = require('axios');
 
 const app = express();
 
-// --- THE CRITICAL CORS FIX ---
-// This middleware must be the VERY FIRST thing after initializing 'app'
+// --- CRITICAL CORS CONFIG ---
 app.use(cors()); 
-
-// Manual header override (Triple-safe for exhibitions)
 app.use((req, res, next) => {
     res.header("Access-Control-Allow-Origin", "*");
-    res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+    res.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
     res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept");
     next();
 });
@@ -23,7 +20,7 @@ app.use((req, res, next) => {
 const API_KEY = process.env.weather_api_key || 'YOUR_OPENWEATHERMAP_API_KEY'; 
 const csvPath = path.join(__dirname, 'data', 'groundwater_history.csv');
 
-// ML Logic: Linear Regression
+// ML Logic: Linear Regression for 1-Year Forecast
 function predictFuture(data) {
     if (data.length < 2) return "Stable";
     const n = data.length;
@@ -41,7 +38,7 @@ function predictFuture(data) {
 app.get('/api/all-stations', (req, res) => {
     const stations = [];
     const seen = new Set();
-    if (!fs.existsSync(csvPath)) return res.status(500).json({ error: "CSV missing" });
+    if (!fs.existsSync(csvPath)) return res.status(500).json({ error: "CSV source missing" });
 
     fs.createReadStream(csvPath).pipe(csv()).on('data', (row) => {
         if (row.station_name && !seen.has(row.station_name)) {
@@ -62,17 +59,20 @@ app.get('/api/search', async (req, res) => {
             matchRow = row;
         }
     }).on('end', async () => {
-        if (!matchRow) return res.status(404).json({ error: "No data" });
-        let hum = 40, tmp = 30;
+        if (!matchRow) return res.status(404).json({ error: "Station not found" });
+
+        let hum = 42, tmp = 29; 
         try {
             const weather = await axios.get(`https://api.openweathermap.org/data/2.5/weather?q=${matchRow.district_name}&appid=${API_KEY}&units=metric`);
             hum = weather.data.main.humidity;
             tmp = weather.data.main.temp;
-        } catch (err) { console.log("API Fallback"); }
+        } catch (err) { console.log("Virtual Sensor Fallback triggered."); }
             
         const lastKnown = history[history.length - 1];
+        // Bio-inspired adjustment logic (Conservative Penalty for heat/dryness)
         const liveEst = (lastKnown + (hum * 0.01) - (tmp * 0.08)).toFixed(2);
         const futureFore = predictFuture(history);
+
         let wpi = (parseFloat(liveEst) * 1.5) + (hum * 0.4) + ((40 - tmp) * 0.6);
         wpi = Math.min(Math.max(wpi, 0), 100).toFixed(1);
 
@@ -89,4 +89,4 @@ app.get('/api/search', async (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Backend Running on Port ${PORT}`));
+app.listen(PORT, () => console.log(`Hydro-Analytics Backend Live on Port ${PORT}`));
